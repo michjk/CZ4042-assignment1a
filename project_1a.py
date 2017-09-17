@@ -35,7 +35,7 @@ def shuffle_data (samples, labels):
 decay = 1e-6
 learning_rate = 0.01
 epochs = 1000
-batch_size = 32
+batch_size = 4
 
 input_layer_size = 36
 hidden_layer_size = 10
