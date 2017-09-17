@@ -93,7 +93,7 @@ init = tf.global_variables_initializer()
 sess.run(init)
 
 for i in range(epochs):
-    #print(i)
+    print(i)
     
     trainX, trainY = shuffle_data(trainX, trainY)
     sum_cost = 0.0
