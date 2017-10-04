@@ -4,9 +4,28 @@ import theano
 import theano.tensor as T
 import matplotlib.pyplot as plt
 
+# scale data
+def scale(X, X_min, X_max):
+    return (X - X_min)/(X_max-np.min(X, axis=0))
+
+# load dataset
+def load_data(data_path):
+    input_txt = np.loadtxt('dataset/sat_train.txt',delimiter=' ')
+    X, _Y = input_txt[:,:36], input_txt[:,-1].astype(int)
+    X_min, X_max = np.min(X, axis=0), np.max(X, axis=0)
+    X = scale(X, X_min, X_max)
+
+    _Y[_Y == 7] = 6
+    Y = np.zeros((_Y.shape[0], 6))
+    Y[np.arange(_Y.shape[0]), _Y-1] = 1
+
+    return X, Y
+
+# create bias tensor
 def init_bias(n = 1):
     return(theano.shared(np.zeros(n), theano.config.floatX))
 
+# create weights tensor
 def init_weights(n_in=1, n_out=1, logistic=True):
     W_values = np.asarray(
         np.random.uniform(
@@ -19,10 +38,6 @@ def init_weights(n_in=1, n_out=1, logistic=True):
         W_values *= 4
     return (theano.shared(value=W_values, name='W', borrow=True))
 
-# scale data
-def scale(X, X_min, X_max):
-    return (X - X_min)/(X_max-np.min(X, axis=0))
-
 # update parameters
 def sgd(cost, params, lr=0.01):
     grads = T.grad(cost=cost, wrt=params)
@@ -31,6 +46,33 @@ def sgd(cost, params, lr=0.01):
         updates.append([p, p - g * lr])
     return updates
 
+def create_3_layer_NN(decay, learning_rate, n_input, n_hidden, n_output):
+    # theano expressions
+    X = T.matrix() #features
+    Y = T.matrix() #output
+
+    w1, b1 = init_weights(n_input, n_hidden), init_bias(n_hidden) #weights and biases from input to hidden layer
+    w2, b2 = init_weights(n_hidden, n_output, logistic=False), init_bias(n_output) #weights and biases from hidden to output layer
+
+    # connect layer
+    h1 = T.nnet.sigmoid(T.dot(X, w1) + b1)
+    py = T.nnet.softmax(T.dot(h1, w2) + b2)
+
+    # decode to category number
+    y_x = T.argmax(py, axis=1)
+
+    cost = T.mean(T.nnet.categorical_crossentropy(py, Y)) + decay*(T.sum(T.sqr(w1)+T.sum(T.sqr(w2))))
+    params = [w1, b1, w2, b2]
+    updates = sgd(cost, params, learning_rate)
+
+    # compile
+    train = theano.function(inputs=[X, Y], outputs=cost, updates=updates, allow_input_downcast=True)
+    predict = theano.function(inputs=[X], outputs=y_x, allow_input_downcast=True)
+
+    return train, predict
+
+
+# suffle data
 def shuffle_data (samples, labels):
     idx = np.arange(samples.shape[0])
     np.random.shuffle(idx)
@@ -38,98 +80,84 @@ def shuffle_data (samples, labels):
     samples, labels = samples[idx], labels[idx]
     return samples, labels
 
+def run_NN_model(train, predict, batch_size, trainX, trainY, testX, testY, epochs):
+    # train and test
+    n = len(trainX)
+    test_accuracy = []
+    train_cost = []
+    for i in range(epochs):
+        if i%100 == 0:
+            print("Epoch: %d"%i)
+        
+        trainX, trainY = shuffle_data(trainX, trainY)
+        cost = 0.0
+        for start, end in zip(range(0, n, batch_size), range(batch_size, n, batch_size)):
+            cost += train(trainX[start:end], trainY[start:end])
+        train_cost = np.append(train_cost, cost/(n // batch_size))
+        
+        test_accuracy = np.append(test_accuracy, np.mean(np.argmax(testY, axis=1) == predict(testX)))
+
+    print('%.1f accuracy at %d iterations'%(np.max(test_accuracy)*100, np.argmax(test_accuracy)+1))
+
+    return train_cost, test_accuracy
+
+def createNewFolder(folder_path):
+    #Create folder for saving figure
+    if not os.path.isdir(folder_path):
+        os.mkdir(folder_path)
+
+def draw_plot(listX, listY, labelX, labelY, title, save_folder_path, file_name):
+    createNewFolder(save_folder_path)
+
+    plt.figure()
+    plt.plot(listX, listY)
+    plt.xlabel(labelX)
+    plt.ylabel(labelY)
+    plt.title(title)
+    plt.savefig(os.path.join(save_folder_path, file_name))
+    plt.show()
+
+def draw_multi_plot(listX, dict_listY, labelX, labelY, list_plot_label, prefix_plot_label, title, save_folder_path, file_name):
+    createNewFolder(save_folder_path)
+
+    plt.figure()
+
+    for plot_label in list_plot_label:
+        plt.plot(listX, dict_listY[plot_label], label=prefix_plot_label+str(plot_label))
+    
+    plt.xlabel(labelX)
+    plt.ylabel(labelY)
+    plt.title(title)
+    plt.savefig(os.path.join(save_folder_path, file_name))
+    plt.show()
+
 decay = 1e-6
 learning_rate = 0.01
+n_input = 36
+n_hidden = 10
+n_output = 6
 epochs = 1000
 batch_size = 32
-
-# theano expressions
-X = T.matrix() #features
-Y = T.matrix() #output
-
-w1, b1 = init_weights(36, 10), init_bias(10) #weights and biases from input to hidden layer
-w2, b2 = init_weights(10, 6, logistic=False), init_bias(6) #weights and biases from hidden to output layer
-
-h1 = T.nnet.sigmoid(T.dot(X, w1) + b1)
-py = T.nnet.softmax(T.dot(h1, w2) + b2)
-
-y_x = T.argmax(py, axis=1)
-
-cost = T.mean(T.nnet.categorical_crossentropy(py, Y)) + decay*(T.sum(T.sqr(w1)+T.sum(T.sqr(w2))))
-params = [w1, b1, w2, b2]
-updates = sgd(cost, params, learning_rate)
-
-# compile
-train = theano.function(inputs=[X, Y], outputs=cost, updates=updates, allow_input_downcast=True)
-predict = theano.function(inputs=[X], outputs=y_x, allow_input_downcast=True)
-
+dataset_dir_path = "dataset"
+train_data_path = os.path.join(dataset_dir_path, "sat_train.txt")
+test_data_path = os.path.join(dataset_dir_path, "sat_test.txt")
+figure_dir_path = "figure"
 
 #read train data
-train_input = np.loadtxt('dataset/sat_train.txt',delimiter=' ')
-trainX, train_Y = train_input[:,:36], train_input[:,-1].astype(int)
-trainX_min, trainX_max = np.min(trainX, axis=0), np.max(trainX, axis=0)
-trainX = scale(trainX, trainX_min, trainX_max)
-
-train_Y[train_Y == 7] = 6
-trainY = np.zeros((train_Y.shape[0], 6))
-trainY[np.arange(train_Y.shape[0]), train_Y-1] = 1
+trainX, trainY = load_data(train_data_path)
 
 #read test data
-test_input = np.loadtxt('dataset/sat_test.txt',delimiter=' ')
-testX, test_Y = test_input[:,:36], test_input[:,-1].astype(int)
-
-testX_min, testX_max = np.min(testX, axis=0), np.max(testX, axis=0)
-testX = scale(testX, testX_min, testX_max)
-
-test_Y[test_Y == 7] = 6
-testY = np.zeros((test_Y.shape[0], 6))
-testY[np.arange(test_Y.shape[0]), test_Y-1] = 1
+testX, testY = load_data(test_data_path)
 
 print(trainX.shape, trainY.shape)
 print(testX.shape, testY.shape)
 
-# first, experiment with a small sample of data
-##trainX = trainX[:1000]
-##trainY = trainY[:1000]
-##testX = testX[-250:]
-##testY = testY[-250:]
-
+#create train and predict function
+train, predict = create_3_layer_NN(decay, learning_rate, n_input, n_hidden, n_output)
 
 # train and test
-n = len(trainX)
-test_accuracy = []
-train_cost = []
-for i in range(epochs):
-    if i%10 == 0:
-        print("epoch: %d"%i)
-    
-    trainX, trainY = shuffle_data(trainX, trainY)
-    cost = 0.0
-    for start, end in zip(range(0, n, batch_size), range(batch_size, n, batch_size)):
-        cost += train(trainX[start:end], trainY[start:end])
-    train_cost = np.append(train_cost, cost/(n // batch_size))
-    
-    test_accuracy = np.append(test_accuracy, np.mean(np.argmax(testY, axis=1) == predict(testX)))
-
-print('%.1f accuracy at %d iterations'%(np.max(test_accuracy)*100, np.argmax(test_accuracy)+1))
-
-#Create folder for saving figure
-if not os.path.isdir("figure"):
-    os.mkdir("figure")
+train_cost, test_accuracy = run_NN_model(train, predict, batch_size, trainX, trainY, testX, testY, epochs)
 
 #Plots
-plt.figure()
-plt.plot(range(epochs), train_cost)
-plt.xlabel('iterations')
-plt.ylabel('cross-entropy')
-plt.title('training cost')
-plt.savefig('figure/pa1_cost.png')
-
-plt.figure()
-plt.plot(range(epochs), test_accuracy)
-plt.xlabel('iterations')
-plt.ylabel('accuracy')
-plt.title('test accuracy')
-plt.savefig('figure/pa1_accuracy.png')
-
-plt.show()
+draw_plot(range(epochs), train_cost, 'iteration', 'cross-entropy', 'training cost', figure_dir_path, 'pa1_cost.png')
+draw_plot(range(epochs), test_accuracy, 'iteration', 'accuracy', 'test accuracy', figure_dir_path, 'pa1_accuracy.png')
